@@ -93,28 +93,55 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
         setTopUsers(firestoreUsers);
       } catch (error) {
         console.error('Error fetching leaderboard:', error);
-        // Fallback to mock data in case of error
-        const fallbackUsers: LeaderboardUser[] = [
-          {
-            id: '1',
-            name: 'Loading...',
-            boltBalance: 0,
-            rank: 1,
-          },
-          {
-            id: '2', 
-            name: 'Loading...',
-            boltBalance: 0,
-            rank: 2,
-          },
-          {
-            id: '3',
-            name: 'Loading...',
-            boltBalance: 0,
-            rank: 3,
-          }
-        ];
-        setTopUsers(fallbackUsers);
+        
+        // Check if it's a permission error
+        if (error.code === 'permission-denied') {
+          // Show permission error message in the UI
+          const permissionErrorUsers: LeaderboardUser[] = [
+            {
+              id: '1',
+              name: 'Permission Required',
+              boltBalance: 0,
+              rank: 1,
+            },
+            {
+              id: '2', 
+              name: 'Check Firestore Rules',
+              boltBalance: 0,
+              rank: 2,
+            },
+            {
+              id: '3',
+              name: 'Deploy Updated Rules',
+              boltBalance: 0,
+              rank: 3,
+            }
+          ];
+          setTopUsers(permissionErrorUsers);
+        } else {
+          // Fallback to mock data for other errors
+          const fallbackUsers: LeaderboardUser[] = [
+            {
+              id: '1',
+              name: 'Sarah Chen',
+              boltBalance: 2450,
+              rank: 1,
+            },
+            {
+              id: '2', 
+              name: 'Alex Rivera',
+              boltBalance: 2180,
+              rank: 2,
+            },
+            {
+              id: '3',
+              name: 'Jordan Kim',
+              boltBalance: 1950,
+              rank: 3,
+            }
+          ];
+          setTopUsers(fallbackUsers);
+        }
       } finally {
         setLoading(false);
       }

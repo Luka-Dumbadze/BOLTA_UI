@@ -22,9 +22,15 @@ const missingVars = Object.entries(requiredEnvVars)
   .map(([key]) => key);
 
 if (missingVars.length > 0) {
-  throw new Error(
-    `Missing required environment variables: ${missingVars.join(", ")}`
+  console.warn(
+    `Missing Firebase environment variables: ${missingVars.join(", ")}`
   );
+  // Don't throw error in development, just warn
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `Missing required environment variables: ${missingVars.join(", ")}`
+    );
+  }
 }
 
 // Firebase configuration
@@ -38,16 +44,29 @@ const firebaseConfig = {
   measurementId: requiredEnvVars.measurementId!,
 };
 
+console.log('🔥 Firebase Config - Project ID:', firebaseConfig.projectId);
+console.log('🔥 Firebase Config - Auth Domain:', firebaseConfig.authDomain);
+
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+console.log('✅ Firebase app initialized');
 
 // Initialize Auth with AsyncStorage persistence
-export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
-});
+let auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(ReactNativeAsyncStorage)
+  });
+  console.log('✅ Firebase Auth initialized with AsyncStorage persistence');
+} catch (error) {
+  console.error('❌ Error initializing Firebase Auth:', error);
+  throw error;
+}
 
 // Initialize other services
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+console.log('✅ Firestore and Storage initialized');
 
+export { auth, db, storage };
 export default app;

@@ -87,6 +87,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       auth,
       async (firebaseUser: FirebaseUser | null) => {
         console.log('Auth state changed:', firebaseUser ? firebaseUser.email : 'null');
+        console.log('Auth state changed - UID:', firebaseUser ? firebaseUser.uid : 'null');
+        console.log('Auth state changed - Access Token:', firebaseUser ? 'Present' : 'None');
         
         if (firebaseUser) {
           try {
@@ -162,7 +164,28 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (error) {
             console.error('Error fetching user data:', error);
-            setUser(null);
+            console.error('Error details:', error.code, error.message);
+            // Still set user with basic info from Firebase Auth
+            if (firebaseUser) {
+              const now: FirebaseTimestamp = {
+                seconds: Math.floor(Date.now() / 1000),
+                nanoseconds: 0
+              };
+              setUser({
+                uid: firebaseUser.uid,
+                name: firebaseUser.displayName || 'User',
+                email: firebaseUser.email || '',
+                boltBalance: 0,
+                createdAt: now,
+                lastActive: now,
+                preferences: { notifications: true, theme: 'light' },
+                achievements: [],
+                totalEarned: 0,
+                totalSpent: 0
+              });
+            } else {
+              setUser(null);
+            }
             await persistUser(null);
           }
         } else {
@@ -176,6 +199,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       },
       (error) => {
         console.error('Auth state change error:', error);
+        console.error('Auth error details:', error.code, error.message);
         setLoading(false);
       }
     );

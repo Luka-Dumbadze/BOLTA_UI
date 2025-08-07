@@ -37,6 +37,12 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
   const [userRank, setUserRank] = useState<number | null>(null);
 
   useEffect(() => {
+    // Only fetch leaderboard data if user is authenticated
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
     // Fetch leaderboard data from Firestore
     const fetchLeaderboard = async () => {
       setLoading(true);
@@ -201,6 +207,25 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={styles.loadingText}>Loading top performers...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Show message when user is not authenticated
+  if (!user) {
+    return (
+      <View style={[styles.container, style]}>
+        <View style={styles.header}>
+          <View style={styles.titleContainer}>
+            <Ionicons name="trophy" size={20} color={Colors.primary} />
+            <Text style={styles.title}>Leaderboard</Text>
+          </View>
+        </View>
+        <View style={styles.motivationContainer}>
+          <Text style={styles.motivationText}>
+            🔐 Sign in to view the leaderboard and compete with other users!
+          </Text>
         </View>
       </View>
     );

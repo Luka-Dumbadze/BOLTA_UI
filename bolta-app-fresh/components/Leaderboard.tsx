@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, where, getCountFromServer } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useSession } from '../providers/SessionProvider';
 import { Colors } from '../constants/Colors';
@@ -52,38 +52,28 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
         const querySnapshot = await getDocs(usersQuery);
         const firestoreUsers: LeaderboardUser[] = [];
 
-        querySnapshot.forEach((doc, index) => {
-          const userData = doc.data() as User;
+        querySnapshot.docs.forEach((snapshot, index: number) => {
+          const userData = snapshot.data() as User;
           firestoreUsers.push({
-            id: doc.id,
+            id: snapshot.id,
             name: userData.name,
             boltBalance: userData.boltBalance,
             rank: index + 1,
             avatar: userData.profilePictureUrl,
-            isCurrentUser: user ? doc.id === user.uid : false
+            isCurrentUser: user ? snapshot.id === user.uid : false
           });
         });
 
-        // If current user is not in top 3, fetch their rank
+        // If current user is not in top 3, fetch their rank efficiently using count aggregation
         if (user && !firestoreUsers.some(u => u.isCurrentUser)) {
           try {
-            // Query to get users with higher bolt balance than current user
             const higherUsersQuery = query(
               collection(db, 'users'),
-              orderBy('boltBalance', 'desc')
+              where('boltBalance', '>', user.boltBalance)
             );
-            
-            const higherUsersSnapshot = await getDocs(higherUsersQuery);
-            let currentUserRank = 1;
-            
-            higherUsersSnapshot.forEach((doc) => {
-              const userData = doc.data() as User;
-              if (userData.boltBalance > user.boltBalance) {
-                currentUserRank++;
-              }
-            });
-            
-            setUserRank(currentUserRank);
+            const snapshot = await getCountFromServer(higherUsersQuery);
+            const higherCount = snapshot.data().count || 0;
+            setUserRank(Number(higherCount) + 1);
           } catch (error) {
             console.error('Error fetching user rank:', error);
             setUserRank(null);
@@ -95,6 +85,7 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
         console.error('Error fetching leaderboard:', error);
         
         // Check if it's a permission error
+        // @ts-ignore
         if (error.code === 'permission-denied') {
           // Show permission error message in the UI
           const permissionErrorUsers: LeaderboardUser[] = [
@@ -232,7 +223,7 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
             <View key={userData.id} style={[styles.podiumItem, { flex: userData.rank === 1 ? 1.2 : 1 }]}>
               {/* Podium Bar */}
               <LinearGradient
-                colors={rankStyle.gradient}
+                colors={rankStyle.gradient as [string, string]}
                 style={[styles.podiumBar, { height: rankStyle.height }]}
               >
                 <View style={styles.podiumContent}>
@@ -286,7 +277,7 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
         <View style={styles.currentUserStatus}>
           <View style={styles.currentUserCard}>
             <View style={styles.currentUserInfo}>
-              <View style={styles.currentUserAvatar}>
+              <View style={styles.currentUserAvatarSmall}>
                 <Ionicons name="person" size={16} color={Colors.primary} />
               </View>
               <Text style={styles.currentUserName}>Your Rank</Text>
@@ -475,7 +466,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  currentUserAvatar: {
+  currentUserAvatarSmall: {
     width: 24,
     height: 24,
     borderRadius: 12,

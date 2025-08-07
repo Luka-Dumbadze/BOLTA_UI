@@ -80,7 +80,7 @@ export default function RewardDetail() {
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         {/* Hero Image Section */}
         <View style={styles.heroSection}>
-          <Image source={{ uri: reward.imageUrl }} style={styles.heroImage} />
+          <Image source={{ uri: String(reward.imageUrl) }} style={styles.heroImage} />
           <LinearGradient
             colors={['transparent', 'rgba(0,0,0,0.7)']}
             style={styles.imageOverlay}

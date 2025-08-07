@@ -1,7 +1,7 @@
 // firebaseConfig.ts
 import { initializeApp } from "firebase/app";
 import { getStorage } from "firebase/storage";
-import { initializeAuth, getReactNativePersistence } from "firebase/auth";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -41,10 +41,15 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Auth with AsyncStorage persistence
-export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
-});
+// Initialize Auth and set persistence. In RN, the default persistence is React Native persistence.
+export const auth = getAuth(app);
+// Best-effort persistence for web environment to avoid type/runtime issues in Node
+try {
+  // @ts-ignore
+  if (typeof window !== 'undefined') {
+    setPersistence(auth, browserLocalPersistence);
+  }
+} catch {}
 
 // Initialize other services
 export const db = getFirestore(app);

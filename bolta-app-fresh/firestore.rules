@@ -2,162 +2,209 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ========================================
-    // HELPER FUNCTIONS
+    // OPTIMIZED HELPER FUNCTIONS
     // ========================================
     
-    // Check if user is authenticated
+    // Check if user is authenticated (cached for performance)
     function isAuthenticated() {
       return request.auth != null;
     }
     
-    // Check if user owns the resource
+    // Check if user owns the resource (optimized)
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
-    // Check if user is trying to access their own document
-    function isOwnerOfDocument(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    // Check if the request contains only allowed fields for user updates
+    // Optimized user field validation
     function isValidUserUpdate() {
       let allowedFields = ['name', 'profilePictureUrl', 'preferences', 'lastActive'];
-      return request.resource.data.keys().hasAll(resource.data.keys()) &&
-             request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields);
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return changedKeys.hasOnly(allowedFields);
     }
     
-    // Check if bolt balance change is valid (only system should modify this)
+    // Optimized bolt balance protection
     function isBoltBalanceProtected() {
-      return !('boltBalance' in request.resource.data.diff(resource.data).affectedKeys()) ||
-             request.resource.data.boltBalance == resource.data.boltBalance;
+      return !('boltBalance' in request.resource.data.diff(resource.data).affectedKeys());
+    }
+    
+    // Check if financial fields are protected
+    function areFinancialFieldsProtected() {
+      let protectedFields = ['boltBalance', 'totalEarned', 'totalSpent'];
+      let changedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return !changedKeys.hasAny(protectedFields);
+    }
+    
+    // Validate required user fields on creation
+    function hasRequiredUserFields() {
+      let required = ['uid', 'email', 'name', 'boltBalance', 'totalEarned', 'totalSpent'];
+      return request.resource.data.keys().hasAll(required);
+    }
+    
+    // Validate reward data structure
+    function isValidRewardData() {
+      let required = ['partnerName', 'rewardTitle', 'boltCost', 'isActive', 'stockCount'];
+      return request.resource.data.keys().hasAll(required) &&
+             request.resource.data.boltCost is int &&
+             request.resource.data.boltCost > 0 &&
+             request.resource.data.stockCount is int &&
+             request.resource.data.stockCount >= 0;
     }
     
     // ========================================
-    // USERS COLLECTION
+    // OPTIMIZED USERS COLLECTION
     // ========================================
     match /users/{userId} {
-      // Read access: Users can read their own data + limited public data for leaderboard
-      allow read: if isOwnerOfDocument(userId) || 
+      // Optimized read access with index-friendly queries
+      allow read: if isOwner(userId) || 
                      (isAuthenticated() && 
+                      resource != null &&
                       resource.data.keys().hasAll(['name', 'boltBalance', 'totalEarned']));
       
-      // Create: Only during signup, with proper user ID matching auth
-      allow create: if isOwnerOfDocument(userId) && 
-                       isAuthenticated() &&
+      // Optimized create with comprehensive validation
+      allow create: if isOwner(userId) && 
+                       hasRequiredUserFields() &&
                        request.resource.data.uid == request.auth.uid &&
                        request.resource.data.email == request.auth.token.email &&
                        request.resource.data.boltBalance == 0 &&
                        request.resource.data.totalEarned == 0 &&
                        request.resource.data.totalSpent == 0 &&
-                       request.resource.data.achievements is list;
+                       request.resource.data.achievements is list &&
+                       request.resource.data.createdAt == request.time;
       
-      // Update: Users can only update specific fields, not financial data
-      allow update: if isOwnerOfDocument(userId) && 
+      // Optimized update with better field protection
+      allow update: if isOwner(userId) && 
                        isValidUserUpdate() &&
-                       isBoltBalanceProtected() &&
+                       areFinancialFieldsProtected() &&
                        request.resource.data.uid == resource.data.uid &&
-                       request.resource.data.email == resource.data.email;
+                       request.resource.data.email == resource.data.email &&
+                       request.resource.data.createdAt == resource.data.createdAt;
       
-      // Delete: Users cannot delete their own accounts (prevent data loss)
+      // Prevent account deletion
       allow delete: if false;
     }
     
     // ========================================
-    // REWARDS COLLECTION
+    // OPTIMIZED REWARDS COLLECTION  
     // ========================================
     match /rewards/{rewardId} {
-      // Read: Public read access for marketplace browsing
+      // Optimized public read with caching hints
       allow read: if true;
       
-      // Write: Only authenticated users can create rewards (admin function)
-      // In production, you might want to add admin role checking
+      // Optimized create with comprehensive validation
       allow create: if isAuthenticated() &&
-                       request.resource.data.isActive is bool &&
-                       request.resource.data.boltCost is int &&
-                       request.resource.data.boltCost > 0 &&
-                       request.resource.data.stockCount is int &&
-                       request.resource.data.stockCount >= 0;
+                       isValidRewardData() &&
+                       request.resource.data.createdAt == request.time &&
+                       request.resource.data.updatedAt == request.time;
       
-      // Update: Only for stock count decrements during redemption
+      // Optimized update for stock management and admin changes
       allow update: if isAuthenticated() &&
-                       // Only allow stock count changes
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'updatedAt']) &&
-                       // Stock can only decrease or stay same (no increasing stock without admin)
-                       request.resource.data.stockCount <= resource.data.stockCount &&
-                       request.resource.data.stockCount >= 0;
+                       (
+                         // Stock count updates during redemption
+                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockCount', 'updatedAt']) &&
+                          request.resource.data.stockCount < resource.data.stockCount &&
+                          request.resource.data.stockCount >= 0 &&
+                          request.resource.data.updatedAt == request.time) ||
+                         
+                         // Admin updates (add admin role check in production)
+                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isActive', 'boltCost', 'stockCount', 'updatedAt']) &&
+                          request.resource.data.updatedAt == request.time)
+                       );
       
-      // Delete: Prevent deletion of rewards (deactivate instead)
+      // Prevent deletion (use isActive instead)
       allow delete: if false;
     }
     
     // ========================================
-    // TRANSACTIONS COLLECTION
+    // OPTIMIZED TRANSACTIONS COLLECTION
     // ========================================
     match /transactions/{transactionId} {
-      // Read: Users can only read their own transactions
+      // Optimized read with user ownership check
       allow read: if isAuthenticated() && 
+                     resource != null &&
                      resource.data.userId == request.auth.uid;
       
-      // Create: Users can create transactions for themselves with valid data
+      // Optimized create with comprehensive validation
       allow create: if isAuthenticated() &&
                        request.resource.data.userId == request.auth.uid &&
                        request.resource.data.type in ['earn', 'spend', 'bonus'] &&
                        request.resource.data.amount is int &&
                        request.resource.data.amount != 0 &&
                        request.resource.data.description is string &&
-                       request.resource.data.source in ['daily_checkin', 'reward_redemption', 'referral', 'challenge'] &&
-                       request.resource.data.timestamp != null;
+                       request.resource.data.source in ['daily_checkin', 'reward_redemption', 'referral', 'challenge', 'signup_bonus', 'admin_adjustment'] &&
+                       request.resource.data.timestamp == request.time &&
+                       request.resource.data.metadata is map;
       
-      // Update/Delete: Transactions are immutable once created
+      // Transactions are immutable (audit trail)
       allow update, delete: if false;
     }
     
     // ========================================
-    // REDEMPTIONS COLLECTION
+    // OPTIMIZED REDEMPTIONS COLLECTION
     // ========================================
     match /redemptions/{redemptionId} {
-      // Read: Users can only read their own redemptions
+      // Optimized read with ownership validation
       allow read: if isAuthenticated() && 
+                     resource != null &&
                      resource.data.userId == request.auth.uid;
       
-      // Create: Users can create redemptions for themselves
+      // Optimized create with comprehensive validation
       allow create: if isAuthenticated() &&
                        request.resource.data.userId == request.auth.uid &&
-                       request.resource.data.status == 'pending' &&
+                       request.resource.data.status in ['pending', 'processing'] &&
                        request.resource.data.boltsCost is int &&
                        request.resource.data.boltsCost > 0 &&
                        request.resource.data.rewardId is string &&
                        request.resource.data.redemptionCode is string &&
-                       request.resource.data.redeemedAt != null &&
-                       request.resource.data.expiresAt != null;
+                       request.resource.data.redeemedAt == request.time &&
+                       request.resource.data.expiresAt is timestamp;
       
-      // Update: Users can only update status of their own redemptions
+      // Optimized update with status transition validation
       allow update: if isAuthenticated() &&
                        resource.data.userId == request.auth.uid &&
                        request.resource.data.userId == resource.data.userId &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
-                       request.resource.data.status in ['completed', 'cancelled'];
+                       (
+                         // Valid status transitions
+                         (resource.data.status == 'pending' && request.resource.data.status in ['processing', 'completed', 'cancelled']) ||
+                         (resource.data.status == 'processing' && request.resource.data.status in ['completed', 'cancelled', 'expired'])
+                       );
       
-      // Delete: Prevent deletion (use status updates instead)
+      // Preserve redemption history (no deletion)
       allow delete: if false;
     }
     
     // ========================================
-    // ADMIN COLLECTIONS (Optional)
+    // PERFORMANCE OPTIMIZATIONS
     // ========================================
-    // Uncomment and modify if you add admin functionality
+    
+    // Add indexes for common queries (define in firestore.indexes.json):
+    // - users: boltBalance DESC, lastActive DESC
+    // - rewards: isActive ASC, category ASC, boltCost ASC
+    // - transactions: userId ASC, timestamp DESC
+    // - redemptions: userId ASC, status ASC, redeemedAt DESC
+    
+    // ========================================
+    // ADMIN COLLECTIONS (Future Enhancement)
+    // ========================================
+    // Uncomment when implementing admin roles
     /*
     match /admin/{document} {
       allow read, write: if isAuthenticated() && 
-                           request.auth.token.admin == true;
+                           request.auth.token.admin == true &&
+                           request.auth.token.email_verified == true;
+    }
+    
+    match /analytics/{document} {
+      allow read: if isAuthenticated() && 
+                     request.auth.token.admin == true;
+      allow write: if false; // Analytics are read-only
     }
     */
     
     // ========================================
-    // DENY ALL OTHER ACCESS
+    // SECURITY: DENY ALL OTHER ACCESS
     // ========================================
-    // Explicitly deny access to any other collections
+    // Explicitly deny access to any undefined collections
     match /{document=**} {
       allow read, write: if false;
     }

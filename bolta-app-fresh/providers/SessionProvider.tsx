@@ -1,5 +1,5 @@
 // providers/SessionProvider.tsx
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -12,6 +12,36 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../firebaseConfig';
 import { User, FirebaseTimestamp } from '../types';
 
+// Constants for performance optimization
+const STORAGE_KEY = 'bolta_user';
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_DELAY = 1000; // 1 second
+
+// Helper function for retry logic
+const retryOperation = async <T>(
+  operation: () => Promise<T>,
+  maxAttempts: number = MAX_RETRY_ATTEMPTS,
+  delay: number = RETRY_DELAY
+): Promise<T> => {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`Operation failed (attempt ${attempt}/${maxAttempts}):`, error);
+      
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, delay * attempt));
+      }
+    }
+  }
+  
+  throw lastError!;
+};
+
 interface SessionContextType {
   user: User | null;
   loading: boolean;
@@ -20,6 +50,14 @@ interface SessionContextType {
   signOut: () => Promise<void>;
   updateBoltBalance: (newBalance: number) => Promise<void>;
   refreshUserData: () => Promise<void>;
+  clearCache: () => void;
+  isOnline: boolean;
+}
+
+// Cache interface for user data
+interface UserCache {
+  data: User;
+  timestamp: number;
 }
 
 const SessionContext = createContext<SessionContextType>({
@@ -30,6 +68,8 @@ const SessionContext = createContext<SessionContextType>({
   signOut: async () => {},
   updateBoltBalance: async () => {},
   refreshUserData: async () => {},
+  clearCache: () => {},
+  isOnline: true,
 });
 
 export function useSession() {
@@ -43,87 +83,136 @@ export function useSession() {
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
+  
+  // Refs for caching and optimization
+  const userCacheRef = useRef<UserCache | null>(null);
+  const lastActiveUpdateRef = useRef<number>(0);
+  const authUnsubscribeRef = useRef<(() => void) | null>(null);
+  
+  // Memoized timestamp creation function
+  const createTimestamp = useCallback((): FirebaseTimestamp => ({
+    seconds: Math.floor(Date.now() / 1000),
+    nanoseconds: 0
+  }), []);
+
+  // Optimized persistent storage functions
+  const loadPersistedUser = useCallback(async (): Promise<User | null> => {
+    try {
+      const persistedData = await AsyncStorage.getItem(STORAGE_KEY);
+      if (persistedData) {
+        const cacheData: UserCache = JSON.parse(persistedData);
+        
+        // Check if cache is still valid
+        if (Date.now() - cacheData.timestamp < CACHE_DURATION) {
+          userCacheRef.current = cacheData;
+          console.log('✅ Loaded valid cached user:', cacheData.data.email);
+          return cacheData.data;
+        } else {
+          console.log('⚠️ User cache expired, will refresh from server');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error loading persisted user:', error);
+      // Clear corrupted cache
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    }
+    return null;
+  }, []);
 
   // Load persisted user data on app start
   useEffect(() => {
-    const loadPersistedUser = async () => {
-      try {
-        const persistedUser = await AsyncStorage.getItem('bolta_user');
-        if (persistedUser) {
-          const userData = JSON.parse(persistedUser);
-          setUser(userData);
-          console.log('Loaded persisted user:', userData.email);
-        }
-      } catch (error) {
-        console.error('Error loading persisted user:', error);
-      } finally {
-        // Only set loading to false if no persisted user was found
-        // If we have a persisted user, let Firebase auth state handle the loading state
-        const persistedUser = await AsyncStorage.getItem('bolta_user');
-        if (!persistedUser) {
-          setLoading(false);
-        }
+    const initializeUser = async () => {
+      const cachedUser = await loadPersistedUser();
+      if (cachedUser) {
+        setUser(cachedUser);
+      } else {
+        setLoading(false);
       }
     };
 
-    loadPersistedUser();
-  }, []);
+    initializeUser();
+  }, [loadPersistedUser]);
 
-  // Helper function to persist user data
-  const persistUser = async (userData: User | null) => {
+  // Optimized helper function to persist user data with caching
+  const persistUser = useCallback(async (userData: User | null) => {
     try {
       if (userData) {
-        await AsyncStorage.setItem('bolta_user', JSON.stringify(userData));
+        const cacheData: UserCache = {
+          data: userData,
+          timestamp: Date.now()
+        };
+        userCacheRef.current = cacheData;
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(cacheData));
+        console.log('💾 User data cached successfully');
       } else {
-        await AsyncStorage.removeItem('bolta_user');
+        userCacheRef.current = null;
+        await AsyncStorage.removeItem(STORAGE_KEY);
+        console.log('🗑️ User cache cleared');
       }
     } catch (error) {
-      console.error('Error persisting user data:', error);
+      console.error('❌ Error persisting user data:', error);
     }
-  };
+  }, []);
+
+  // Optimized function to check if lastActive should be updated (throttled)
+  const shouldUpdateLastActive = useCallback(() => {
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastActiveUpdateRef.current;
+    return timeSinceLastUpdate > 60000; // Only update every minute
+  }, []);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(
       auth,
       async (firebaseUser: FirebaseUser | null) => {
-        console.log('Auth state changed:', firebaseUser ? firebaseUser.email : 'null');
-        console.log('Auth state changed - UID:', firebaseUser ? firebaseUser.uid : 'null');
-        console.log('Auth state changed - Access Token:', firebaseUser ? 'Present' : 'None');
+        console.log('🔄 Auth state changed:', firebaseUser ? firebaseUser.email : 'null');
         
         if (firebaseUser) {
           try {
+            // Check cache first to avoid unnecessary Firestore reads
+            const cachedUser = userCacheRef.current;
+            if (cachedUser && 
+                cachedUser.data.uid === firebaseUser.uid && 
+                Date.now() - cachedUser.timestamp < CACHE_DURATION) {
+              console.log('📋 Using cached user data:', cachedUser.data.email);
+              setUser(cachedUser.data);
+              setLoading(false);
+              return;
+            }
+
             const userDocRef = doc(db, 'users', firebaseUser.uid);
-            const userDoc = await getDoc(userDocRef);
+            
+            // Use retry logic for Firestore operations
+            const userDoc = await retryOperation(() => getDoc(userDocRef));
 
             if (userDoc.exists()) {
               const userData = userDoc.data() as User;
               
-              const now: FirebaseTimestamp = {
-                seconds: Math.floor(Date.now() / 1000),
-                nanoseconds: 0
-              };
-              
-              await updateDoc(userDocRef, {
-                lastActive: now
-              });
+              // Only update lastActive if enough time has passed (throttling)
+              let updatedUser = userData;
+              if (shouldUpdateLastActive()) {
+                const now = createTimestamp();
+                
+                try {
+                  await updateDoc(userDocRef, { lastActive: now });
+                  updatedUser = { ...userData, lastActive: now };
+                  lastActiveUpdateRef.current = Date.now();
+                  console.log('⏰ Updated lastActive timestamp');
+                } catch (updateError) {
+                  console.warn('⚠️ Failed to update lastActive, using cached data:', updateError);
+                  // Continue with existing user data if lastActive update fails
+                }
+              }
 
-              const updatedUser = {
-                ...userData,
-                lastActive: now
-              };
-
-              console.log('Setting user from Firestore:', updatedUser.email, 'Balance:', updatedUser.boltBalance);
+              console.log('✅ Setting user from Firestore:', updatedUser.email, 'Balance:', updatedUser.boltBalance);
               setUser(updatedUser);
-              await persistUser(updatedUser); // Persist to AsyncStorage
+              await persistUser(updatedUser);
             } else {
               // User document doesn't exist - create it for existing authenticated users
-              console.log('User document not found, creating one...');
+              console.log('👤 User document not found, creating one...');
               
-              const now: FirebaseTimestamp = {
-                seconds: Math.floor(Date.now() / 1000),
-                nanoseconds: 0
-              };
-
+              const now = createTimestamp();
               const newUser: User = {
                 uid: firebaseUser.uid,
                 name: firebaseUser.displayName || 'User',
@@ -141,14 +230,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
               };
 
               try {
-                await setDoc(userDocRef, newUser);
+                await retryOperation(() => setDoc(userDocRef, newUser));
                 setUser(newUser);
                 await persistUser(newUser);
-                console.log('User document created successfully');
+                console.log('✅ User document created successfully');
               } catch (createError) {
-                console.error('Error creating user document:', createError);
+                console.error('❌ Error creating user document:', createError);
                 // If we can't create the document, still set a basic user object
-                setUser({
+                const fallbackUser: User = {
                   uid: firebaseUser.uid,
                   name: firebaseUser.displayName || 'User',
                   email: firebaseUser.email || '',
@@ -159,72 +248,90 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
                   achievements: [],
                   totalEarned: 0,
                   totalSpent: 0
-                });
+                };
+                setUser(fallbackUser);
+                await persistUser(fallbackUser);
               }
             }
           } catch (error) {
-            console.error('Error fetching user data:', error);
-            console.error('Error details:', error.code, error.message);
-            // Still set user with basic info from Firebase Auth
-            if (firebaseUser) {
-              const now: FirebaseTimestamp = {
-                seconds: Math.floor(Date.now() / 1000),
-                nanoseconds: 0
-              };
-              setUser({
+            console.error('❌ Error fetching user data:', error);
+            setIsOnline(false);
+            
+            // Try to use cached data as fallback
+            const cachedUser = userCacheRef.current;
+            if (cachedUser && cachedUser.data.uid === firebaseUser.uid) {
+              console.log('📋 Using cached data as fallback');
+              setUser(cachedUser.data);
+            } else {
+              // Create minimal user object from Firebase Auth
+              const fallbackUser: User = {
                 uid: firebaseUser.uid,
                 name: firebaseUser.displayName || 'User',
                 email: firebaseUser.email || '',
                 boltBalance: 0,
-                createdAt: now,
-                lastActive: now,
+                createdAt: createTimestamp(),
+                lastActive: createTimestamp(),
                 preferences: { notifications: true, theme: 'light' },
                 achievements: [],
                 totalEarned: 0,
                 totalSpent: 0
-              });
-            } else {
-              setUser(null);
+              };
+              setUser(fallbackUser);
+              await persistUser(fallbackUser);
             }
-            await persistUser(null);
           }
         } else {
-          console.log('🔥 Auth state: No authenticated user, clearing user state');
+          console.log('🚪 Auth state: No authenticated user, clearing user state');
           setUser(null);
           await persistUser(null);
-          console.log('🔥 Auth state: User state and storage cleared');
+          setIsOnline(true); // Reset online status
         }
-        console.log('🔥 Auth state: Setting loading to false');
         setLoading(false);
       },
       (error) => {
-        console.error('Auth state change error:', error);
-        console.error('Auth error details:', error.code, error.message);
+        console.error('❌ Auth state change error:', error);
         setLoading(false);
+        setIsOnline(false);
       }
     );
 
-    return () => unsubscribeAuth();
+    authUnsubscribeRef.current = unsubscribeAuth;
+    return () => {
+      if (authUnsubscribeRef.current) {
+        authUnsubscribeRef.current();
+        authUnsubscribeRef.current = null;
+      }
+    };
+  }, [createTimestamp, shouldUpdateLastActive, persistUser]);
+
+  // Optimized sign-in with better error handling
+  const signIn = useCallback(async (email: string, password: string): Promise<void> => {
+    try {
+      setIsOnline(true);
+      await retryOperation(() => signInWithEmailAndPassword(auth, email, password));
+      console.log('✅ Sign in successful');
+    } catch (error: any) {
+      console.error('❌ Error signing in:', error);
+      setIsOnline(false);
+      
+      // Provide more specific error messages
+      const errorMessage = error.code === 'auth/network-request-failed' 
+        ? 'Network error. Please check your connection and try again.'
+        : error.message || 'Sign in failed. Please try again.';
+      
+      throw new Error(errorMessage);
+    }
   }, []);
 
-  const signIn = async (email: string, password: string): Promise<void> => {
+  // Optimized sign-up with better error handling
+  const signUp = useCallback(async (email: string, password: string, name: string): Promise<void> => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      console.error('Error signing in:', error);
-      throw error;
-    }
-  };
-
-  const signUp = async (email: string, password: string, name: string): Promise<void> => {
-    try {
-      const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
+      setIsOnline(true);
+      const { user: firebaseUser } = await retryOperation(() => 
+        createUserWithEmailAndPassword(auth, email, password)
+      );
       
-      const now: FirebaseTimestamp = {
-        seconds: Math.floor(Date.now() / 1000),
-        nanoseconds: 0
-      };
-
+      const now = createTimestamp();
       const newUser: User = {
         uid: firebaseUser.uid,
         name,
@@ -241,105 +348,157 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         totalSpent: 0
       };
 
-      await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
-    } catch (error) {
-      console.error('Error signing up:', error);
-      throw error;
+      await retryOperation(() => setDoc(doc(db, 'users', firebaseUser.uid), newUser));
+      console.log('✅ Sign up successful');
+    } catch (error: any) {
+      console.error('❌ Error signing up:', error);
+      setIsOnline(false);
+      
+      const errorMessage = error.code === 'auth/network-request-failed'
+        ? 'Network error. Please check your connection and try again.'
+        : error.message || 'Sign up failed. Please try again.';
+      
+      throw new Error(errorMessage);
     }
-  };
+  }, [createTimestamp]);
 
-  const signOut = async (): Promise<void> => {
-    console.log('🚪 Starting regular sign out process...');
+  // Optimized sign-out with cleanup
+  const signOut = useCallback(async (): Promise<void> => {
+    console.log('🚪 Starting sign out process...');
     
     try {
-      // Step 1: Sign out from Firebase first (this will trigger auth state change)
+      // Clear cache first
+      userCacheRef.current = null;
+      lastActiveUpdateRef.current = 0;
+      
+      // Sign out from Firebase (this will trigger auth state change)
       await firebaseSignOut(auth);
       console.log('✅ Firebase sign out successful');
       
-      // Step 2: Clear local state immediately after Firebase signout
+      // Clear local state
       setUser(null);
-      console.log('✅ User state cleared');
-      
-      // Step 3: Clear persisted storage
       await persistUser(null);
-      console.log('✅ Persisted data cleared');
+      setIsOnline(true); // Reset online status
+      console.log('✅ Local state cleared');
       
     } catch (error) {
       console.error('⚠️ Firebase sign out error, clearing local state anyway:', error);
       
-      // If Firebase fails, still clear local state
+      // Force clear local state even if Firebase fails
+      userCacheRef.current = null;
+      lastActiveUpdateRef.current = 0;
       setUser(null);
+      setIsOnline(true);
+      
       try {
         await persistUser(null);
         console.log('✅ Local data cleared despite Firebase error');
       } catch (storageError) {
-        console.error('⚠️ Storage clear error:', storageError);
+        console.error('❌ Storage clear error:', storageError);
       }
     }
     
-    console.log('🎉 Regular sign out process completed');
-  };
+    console.log('🎉 Sign out process completed');
+  }, [persistUser]);
 
-  const updateBoltBalance = async (newBalance: number): Promise<void> => {
+  // Optimized bolt balance update with optimistic updates
+  const updateBoltBalance = useCallback(async (newBalance: number): Promise<void> => {
     if (!user) {
       throw new Error('No user logged in');
     }
 
+    const previousBalance = user.boltBalance;
+    console.log('💰 Updating bolt balance from', previousBalance, 'to', newBalance);
+    
     try {
-      console.log('Updating bolt balance from', user.boltBalance, 'to', newBalance);
-      
-      // Update local state immediately for instant UI feedback
+      // Optimistic update - update UI immediately
       const updatedUser = { ...user, boltBalance: newBalance };
       setUser(updatedUser);
-      await persistUser(updatedUser); // Persist updated data immediately
+      await persistUser(updatedUser);
       
-      // Then update Firestore
+      // Then update Firestore with retry logic
       const userDocRef = doc(db, 'users', user.uid);
-      await updateDoc(userDocRef, {
-        boltBalance: newBalance
-      });
+      await retryOperation(() => updateDoc(userDocRef, { boltBalance: newBalance }));
       
-      console.log('Bolt balance updated successfully');
+      console.log('✅ Bolt balance updated successfully');
+      setIsOnline(true);
     } catch (error) {
-      console.error('Error updating bolt balance:', error);
-      // Revert local state if Firestore update fails
-      setUser(user);
-      await persistUser(user);
-      throw error;
+      console.error('❌ Error updating bolt balance:', error);
+      setIsOnline(false);
+      
+      // Revert optimistic update on failure
+      const revertedUser = { ...user, boltBalance: previousBalance };
+      setUser(revertedUser);
+      await persistUser(revertedUser);
+      
+      throw new Error('Failed to update balance. Please try again.');
     }
-  };
+  }, [user, persistUser]);
 
-  const refreshUserData = async (): Promise<void> => {
+  // Optimized refresh with cache invalidation
+  const refreshUserData = useCallback(async (): Promise<void> => {
     if (!user) {
+      console.warn('⚠️ No user to refresh');
       return;
     }
 
     try {
+      console.log('🔄 Refreshing user data...');
+      
+      // Invalidate cache
+      userCacheRef.current = null;
+      
       const userDocRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userDocRef);
+      const userDoc = await retryOperation(() => getDoc(userDocRef));
 
       if (userDoc.exists()) {
         const userData = userDoc.data() as User;
         setUser(userData);
+        await persistUser(userData);
+        console.log('✅ User data refreshed successfully');
+        setIsOnline(true);
+      } else {
+        console.warn('⚠️ User document not found during refresh');
       }
     } catch (error) {
-      console.error('Error refreshing user data:', error);
-      throw error;
+      console.error('❌ Error refreshing user data:', error);
+      setIsOnline(false);
+      throw new Error('Failed to refresh user data. Please try again.');
     }
-  };
+  }, [user, persistUser]);
+
+  // Cache clearing function
+  const clearCache = useCallback(() => {
+    console.log('🗑️ Clearing user cache...');
+    userCacheRef.current = null;
+    lastActiveUpdateRef.current = 0;
+  }, []);
+
+  // Memoize the context value to prevent unnecessary re-renders
+  const contextValue = useMemo(() => ({
+    user,
+    loading,
+    signIn,
+    signUp,
+    signOut,
+    updateBoltBalance,
+    refreshUserData,
+    clearCache,
+    isOnline
+  }), [
+    user,
+    loading,
+    signIn,
+    signUp,
+    signOut,
+    updateBoltBalance,
+    refreshUserData,
+    clearCache,
+    isOnline
+  ]);
 
   return (
-    <SessionContext.Provider
-      value={{
-        user,
-        loading,
-        signIn,
-        signUp,
-        signOut,
-        updateBoltBalance,
-        refreshUserData
-      }}
-    >
+    <SessionContext.Provider value={contextValue}>
       {children}
     </SessionContext.Provider>
   );

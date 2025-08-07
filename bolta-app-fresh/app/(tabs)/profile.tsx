@@ -1,5 +1,5 @@
 // app/(tabs)/profile.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { 
   View, 
   Text, 
@@ -16,8 +16,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSession } from '../../providers/SessionProvider';
 import { Colors } from '../../constants/Colors';
 
-export default function Profile() {
-  const { user, signOut, refreshUserData, loading } = useSession();
+const Profile = memo(function Profile() {
+  const { user, signOut, refreshUserData, loading, clearCache } = useSession();
   const [refreshing, setRefreshing] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const router = useRouter();
@@ -32,7 +32,8 @@ export default function Profile() {
     }
   }, [user, loading, router]);
 
-  const handleSignOut = () => {
+  // Optimized sign out handler
+  const handleSignOut = useCallback(() => {
     Alert.alert(
       'Sign Out',
       'Are you sure you want to sign out?',
@@ -43,24 +44,24 @@ export default function Profile() {
           style: 'destructive',
           onPress: async () => {
             setSigningOut(true);
-            console.log('🔴 Profile: User confirmed regular sign out');
+            console.log('🚪 Profile: User confirmed sign out');
             
             try {
+              // Clear cache before signing out
+              clearCache();
               await signOut();
-              console.log('🔴 Profile: Regular sign out completed');
+              console.log('✅ Profile: Sign out completed');
               
               // Force navigation to login after sign out
-              console.log('🔴 Profile: Forcing navigation to login...');
-              // Try multiple navigation approaches
               router.replace('/login');
-              // Also try navigating to root index which should handle the redirect
+              
+              // Backup navigation
               setTimeout(() => {
-                console.log('🔴 Profile: Backup navigation to root index...');
                 router.replace('/');
               }, 100);
               
             } catch (error) {
-              console.error('🔴 Profile: Regular sign out error:', error);
+              console.error('❌ Profile: Sign out error:', error);
               Alert.alert('Sign Out Error', 'There was an issue signing out. Please try the Emergency Sign Out button below.');
               setSigningOut(false);
             }
@@ -68,18 +69,20 @@ export default function Profile() {
         }
       ]
     );
-  };
+  }, [signOut, clearCache, router]);
 
-  const onRefresh = async () => {
+  // Optimized refresh handler
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await refreshUserData();
+      console.log('✅ Profile data refreshed');
     } catch (error) {
-      console.error('Error refreshing user data:', error);
+      console.error('❌ Error refreshing user data:', error);
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [refreshUserData]);
 
   // Show signing out state
   if (signingOut) {
@@ -112,11 +115,53 @@ export default function Profile() {
     );
   }
 
-  // Calculate user statistics
-  const totalTransactions = (user.totalEarned || 0) + (user.totalSpent || 0);
-  const memberSince = user.createdAt 
-    ? new Date(user.createdAt.seconds * 1000).toLocaleDateString()
-    : 'Unknown';
+  // Memoized user statistics
+  const userStats = useMemo(() => {
+    if (!user) return { totalTransactions: 0, memberSince: 'Unknown' };
+    
+    const totalTransactions = (user.totalEarned || 0) + (user.totalSpent || 0);
+    const memberSince = user.createdAt 
+      ? new Date(user.createdAt.seconds * 1000).toLocaleDateString()
+      : 'Unknown';
+    
+    return { totalTransactions, memberSince };
+  }, [user?.totalEarned, user?.totalSpent, user?.createdAt]);
+
+  // Memoized emergency sign out handler
+  const handleEmergencySignOut = useCallback(() => {
+    Alert.alert(
+      'Emergency Sign Out',
+      'Use this only if regular sign out is not working. This will force close the session.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Emergency Sign Out', 
+          style: 'destructive',
+          onPress: async () => {
+            console.log('🚨 Emergency sign out triggered');
+            try {
+              setSigningOut(true);
+              // Clear cache and AsyncStorage directly
+              clearCache();
+              await AsyncStorage.removeItem('bolta_user');
+              console.log('🚨 Emergency cleanup completed');
+              
+              // Force reload if possible
+              if (typeof window !== 'undefined' && window.location?.reload) {
+                window.location.reload();
+              } else {
+                console.log('🚨 Manual app restart needed');
+                router.replace('/login');
+              }
+            } catch (error) {
+              console.error('🚨 Emergency sign out error:', error);
+              router.replace('/login');
+            }
+          }
+        }
+      ]
+    );
+  }, [clearCache, router]);
 
   return (
     <ScrollView 
@@ -167,13 +212,13 @@ export default function Profile() {
           
           <View style={styles.statCard}>
             <Ionicons name="swap-horizontal" size={24} color={Colors.primary} />
-            <Text style={styles.statValue}>{totalTransactions}</Text>
+            <Text style={styles.statValue}>{userStats.totalTransactions}</Text>
             <Text style={styles.statLabel}>Transactions</Text>
           </View>
           
           <View style={styles.statCard}>
             <Ionicons name="calendar" size={24} color={Colors.textSecondary} />
-            <Text style={styles.statValue}>{memberSince}</Text>
+            <Text style={styles.statValue}>{userStats.memberSince}</Text>
             <Text style={styles.statLabel}>Member Since</Text>
           </View>
         </View>
@@ -236,33 +281,8 @@ export default function Profile() {
 
       {/* Emergency Sign Out Button (backup option) */}
       <TouchableOpacity 
-        style={[styles.signOutButton, { backgroundColor: Colors.textSecondary, marginTop: 10, opacity: 0.7 }]} 
-        onPress={async () => {
-          Alert.alert(
-            'Emergency Sign Out',
-            'Use this only if regular sign out is not working. This will force close the session.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Emergency Sign Out', 
-                style: 'destructive',
-                onPress: async () => {
-                  console.log('🚨 Emergency sign out triggered');
-                  try {
-                    setSigningOut(true);
-                    // Clear AsyncStorage directly
-                    await AsyncStorage.removeItem('bolta_user');
-                    console.log('🚨 AsyncStorage cleared');
-                    // Force reload the app by clearing everything
-                    window.location?.reload?.() || console.log('🚨 Manual app restart needed');
-                  } catch (error) {
-                    console.error('🚨 Emergency sign out error:', error);
-                  }
-                }
-              }
-            ]
-          );
-        }}
+        style={[styles.signOutButton, styles.emergencyButton]} 
+        onPress={handleEmergencySignOut}
       >
         <Ionicons name="warning-outline" size={16} color="white" />
         <Text style={[styles.signOutText, { fontSize: 14 }]}>Emergency Sign Out</Text>
@@ -272,7 +292,9 @@ export default function Profile() {
       <View style={styles.footer} />
     </ScrollView>
   );
-}
+});
+
+export default Profile;
 
 const styles = StyleSheet.create({
   container: {
@@ -476,5 +498,10 @@ const styles = StyleSheet.create({
   },
   footer: {
     height: 20,
+  },
+  emergencyButton: {
+    backgroundColor: Colors.textSecondary,
+    marginTop: 10,
+    opacity: 0.7,
   },
 });

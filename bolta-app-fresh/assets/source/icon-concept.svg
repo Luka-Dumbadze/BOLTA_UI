@@ -1,0 +1,36 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle (Optional) -->
+  <circle cx="512" cy="512" r="480" fill="none" stroke="#E5E5E7" stroke-width="2" opacity="0.3"/>
+  
+  <!-- Main Footprint Shape -->
+  <g id="footprint" transform="translate(512, 450)">
+    <!-- Heel -->
+    <ellipse cx="0" cy="60" rx="80" ry="40" fill="#007AFF" opacity="0.8"/>
+    <!-- Arch -->
+    <ellipse cx="0" cy="20" rx="60" ry="25" fill="#007AFF" opacity="0.8"/>
+    <!-- Ball of foot -->
+    <ellipse cx="0" cy="-20" rx="90" ry="35" fill="#007AFF" opacity="0.8"/>
+    <!-- Toes -->
+    <circle cx="-30" cy="-60" r="18" fill="#007AFF" opacity="0.8"/>
+    <circle cx="-10" cy="-70" r="20" fill="#007AFF" opacity="0.8"/>
+    <circle cx="15" cy="-68" r="18" fill="#007AFF" opacity="0.8"/>
+    <circle cx="35" cy="-60" r="15" fill="#007AFF" opacity="0.8"/>
+    <circle cx="50" cy="-50" r="12" fill="#007AFF" opacity="0.8"/>
+  </g>
+  
+  <!-- Coin/Reward Element -->
+  <g id="coin" transform="translate(650, 350)">
+    <!-- Outer ring -->
+    <circle cx="0" cy="0" r="60" fill="#FFD700" opacity="0.9"/>
+    <!-- Inner circle -->
+    <circle cx="0" cy="0" r="45" fill="#FFA500" opacity="0.8"/>
+    <!-- Bolt symbol -->
+    <path d="M -15 -25 L 10 -25 L -5 5 L 15 5 L -10 25 L 5 -5 L -15 -5 Z" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+  
+  <!-- Connection line (optional) -->
+  <path d="M 580 420 Q 620 380 620 380" stroke="#007AFF" stroke-width="3" fill="none" opacity="0.4"/>
+  
+  <!-- App name (optional, for reference) -->
+  <text x="512" y="900" font-family="Arial, sans-serif" font-size="48" font-weight="bold" text-anchor="middle" fill="#007AFF" opacity="0.6">Boltha</text>
+</svg>

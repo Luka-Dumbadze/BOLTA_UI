@@ -35,9 +35,12 @@ export default function Redemption() {
     setTimeout(() => {
       setShowSuccess(true);
       // Update user's bolt balance
-      if (user && params.boltCost) {
-        const newBalance = user.boltBalance - parseInt(params.boltCost as string);
-        updateBoltBalance(newBalance).catch(console.error);
+      if (user) {
+        const cost = Number.parseInt((params.boltCost as string) || '0');
+        if (!Number.isNaN(cost) && cost > 0) {
+          const newBalance = Math.max(0, (user.boltBalance || 0) - cost);
+          updateBoltBalance(newBalance).catch(console.error);
+        }
       }
     }, 1500);
   }, []);

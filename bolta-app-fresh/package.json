@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
@@ -43,7 +44,7 @@
     "@types/node": "^24.2.0",
     "@types/react": "~19.0.10",
     "@types/yup": "^0.32.0",
-    "typescript": "~5.8.3"
+    "typescript": "~5.4.5"
   },
   "private": true
 }

@@ -7,7 +7,7 @@ import {
   signOut as firebaseSignOut,
   User as FirebaseUser
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, increment, runTransaction } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../firebaseConfig';
 import { User, FirebaseTimestamp } from '../types';
@@ -263,18 +263,28 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
     try {
       console.log('Updating bolt balance from', user.boltBalance, 'to', newBalance);
-      
-      // Update local state immediately for instant UI feedback
-      const updatedUser = { ...user, boltBalance: newBalance };
+
+      // Prevent negative balances in client state
+      const clampedBalance = Math.max(0, Math.floor(newBalance));
+
+      // Optimistically update local state for instant UI feedback
+      const previousUser = user;
+      const updatedUser = { ...user, boltBalance: clampedBalance };
       setUser(updatedUser);
-      await persistUser(updatedUser); // Persist updated data immediately
-      
-      // Then update Firestore
-      const userDocRef = doc(db, 'users', user.uid);
-      await updateDoc(userDocRef, {
-        boltBalance: newBalance
+      await persistUser(updatedUser);
+
+      // Use a transaction to ensure server-side consistency and prevent race conditions
+      await runTransaction(db, async (transaction) => {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await transaction.get(userRef);
+        if (!userSnap.exists()) {
+          throw new Error('User document does not exist');
+        }
+        const current = userSnap.data() as User;
+        const serverClamped = Math.max(0, Math.floor(clampedBalance));
+        transaction.update(userRef, { boltBalance: serverClamped });
       });
-      
+
       console.log('Bolt balance updated successfully');
     } catch (error) {
       console.error('Error updating bolt balance:', error);

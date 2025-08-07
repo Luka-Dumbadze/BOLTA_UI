@@ -253,8 +253,12 @@ export default function Profile() {
                     // Clear AsyncStorage directly
                     await AsyncStorage.removeItem('bolta_user');
                     console.log('🚨 AsyncStorage cleared');
-                    // Force reload the app by clearing everything
-                    window.location?.reload?.() || console.log('🚨 Manual app restart needed');
+                    // Attempt reload if available
+                    const maybeWindow: any = (globalThis as any).window;
+                    const canReload = maybeWindow && typeof maybeWindow.location?.reload === 'function';
+                    if (canReload) {
+                      maybeWindow.location.reload();
+                    }
                   } catch (error) {
                     console.error('🚨 Emergency sign out error:', error);
                   }

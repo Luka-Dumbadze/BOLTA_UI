@@ -15,6 +15,7 @@ import { db } from '../../firebaseConfig';
 import { useSession } from '../../providers/SessionProvider';
 import { Reward } from '../../types';
 import { Colors } from '../../constants/Colors';
+import { useRouter } from 'expo-router';
 
 /**
  * Reusable Reward Card Component
@@ -79,6 +80,7 @@ export default function Marketplace() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const { user, updateBoltBalance, refreshUserData } = useSession();
+  const router = useRouter();
 
   /**
    * Fetch rewards from Firestore
@@ -106,7 +108,7 @@ export default function Marketplace() {
       if (rewardsData.length === 0) {
         console.log('No rewards found in the collection. You may need to add some test data.');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching rewards:', error);
       
       // Handle permission errors gracefully
@@ -137,7 +139,7 @@ export default function Marketplace() {
       return;
     }
 
-    if (user.boltBalance < reward.boltCost) {
+    if ((user.boltBalance || 0) < (reward.boltCost || 0)) {
       Alert.alert(
         'Insufficient Bolts',
         `You need ${reward.boltCost} bolts to redeem this reward. You currently have ${user.boltBalance} bolts.`
@@ -145,88 +147,25 @@ export default function Marketplace() {
       return;
     }
 
-    if (reward.stockCount <= 0) {
+    if ((reward.stockCount || 0) <= 0) {
       Alert.alert('Out of Stock', 'This reward is currently out of stock.');
       return;
     }
 
-    // Show reward details and confirmation
-    Alert.alert(
-      reward.rewardTitle,
-      `${reward.rewardDescription}\n\nCost: ⚡ ${reward.boltCost} bolts\nPartner: ${reward.partnerName}\n\nWould you like to redeem this reward?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Redeem', 
-          onPress: () => handleRewardRedemption(reward),
-          style: 'default'
-        }
-      ]
-    );
-  };
-
-  /**
-   * Handle reward redemption
-   * Deduct bolts from user balance and create redemption record
-   */
-  const handleRewardRedemption = async (reward: Reward) => {
-    if (!user) {
-      Alert.alert('Error', 'Please log in to redeem rewards');
-      return;
-    }
-
-    try {
-      // Calculate new balance
-      const newBalance = user.boltBalance - reward.boltCost;
-      
-      // Create redemption record first
-      const redemptionData = {
-        userId: user.uid,
-        userName: user.name,
-        userEmail: user.email,
-        rewardId: reward.rewardId,
-        rewardTitle: reward.rewardTitle,
-        partnerName: reward.partnerName,
-        boltCost: reward.boltCost,
-        status: 'completed',
-        redeemedAt: serverTimestamp(),
-        expiryDate: new Date(Date.now() + (reward.expiryDays * 24 * 60 * 60 * 1000)).toISOString()
-      };
-
-      // Add redemption record to Firestore
-      await addDoc(collection(db, 'redemptions'), redemptionData);
-      
-      // Update user's bolt balance
-      await updateBoltBalance(newBalance);
-      
-      // Update reward stock count (if needed)
-      if (reward.stockCount > 0) {
-        const rewardDocRef = doc(db, 'rewards', reward.rewardId);
-        await updateDoc(rewardDocRef, {
-          stockCount: reward.stockCount - 1
-        });
+    // Navigate to detailed view which handles redemption flow securely
+    router.push({
+      pathname: '/reward-detail',
+      params: {
+        id: reward.rewardId,
+        title: reward.rewardTitle,
+        description: reward.rewardDescription,
+        partner: reward.partnerName,
+        cost: String(reward.boltCost),
+        stock: String(reward.stockCount),
+        image: reward.logoUrl || '',
+        category: reward.category
       }
-      
-      // Show success message
-      Alert.alert(
-        'Redemption Successful! 🎉',
-        `You have successfully redeemed "${reward.rewardTitle}"!\n\nYour new balance: ⚡ ${newBalance} bolts\n\nRedemption details will be sent to your email.`,
-        [{ text: 'OK', style: 'default' }]
-      );
-      
-      // Refresh rewards list to update stock count and ensure user balance is current
-      await Promise.all([
-        fetchRewards(),
-        refreshUserData()
-      ]);
-      
-    } catch (error) {
-      console.error('Error redeeming reward:', error);
-      Alert.alert(
-        'Redemption Failed',
-        'There was an error processing your redemption. Please try again.'
-      );
-    }
+    });
   };
 
   /**

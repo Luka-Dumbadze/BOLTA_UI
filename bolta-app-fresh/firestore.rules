@@ -1,32 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow public read access to rewards (for marketplace)
-    // Allow authenticated users to update reward stock counts
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true || 'admin' in request.auth.token.roles);
+    }
+
+    // Rewards: public readable, only admins can write
     match /rewards/{document} {
       allow read: if true;
-      allow write: if request.auth != null; // Only authenticated users can modify rewards
+      allow write: if isAdmin();
     }
     
-    // Allow authenticated users to access their own data fully
-    // Allow authenticated users to read public user data for leaderboard functionality
+    // Users collection: allow authenticated users to read for leaderboard and profiles
     match /users/{userId} {
-      // Full read/write access to own profile
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      
-      // Allow reading other users' public data for leaderboard (authenticated users only)
-      // This enables leaderboard queries while maintaining security
-      allow read: if request.auth != null;
+      // Allow authenticated users to read (enables leaderboard queries)
+      allow read: if isSignedIn();
+
+      // Allow owners to create their own document with validated schema
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasOnly(['uid','name','email','profilePictureUrl','boltBalance','createdAt','lastActive','preferences','achievements','totalEarned','totalSpent']) &&
+        request.resource.data.uid == userId &&
+        request.resource.data.boltBalance is int && request.resource.data.boltBalance >= 0;
+
+      // Allow owners to update limited, safe fields OR perform controlled balance decrement
+      allow update: if isOwner(userId) && (
+        // Safe profile updates
+        request.resource.data.diff(resource.data).changedKeys().hasOnly(['name','profilePictureUrl','preferences','lastActive']) &&
+        request.resource.data.preferences.theme in ['light','dark']
+        ||
+        // Controlled boltBalance decrement (no increments allowed client-side)
+        request.resource.data.diff(resource.data).changedKeys().hasOnly(['boltBalance','lastActive']) &&
+        request.resource.data.boltBalance is int &&
+        request.resource.data.boltBalance >= 0 &&
+        request.resource.data.boltBalance <= resource.data.boltBalance
+      );
     }
     
-    // Allow authenticated users to create and read redemptions
+    // Redemptions: only allow creating for yourself, with validated fields
     match /redemptions/{document} {
-      allow read, write: if request.auth != null;
+      allow read: if isOwner(resource.data.userId);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid &&
+        request.resource.data.keys().hasOnly(['userId','userName','userEmail','rewardId','rewardTitle','partnerName','boltCost','status','redeemedAt','expiryDate']) &&
+        request.resource.data.status in ['pending','completed'] &&
+        request.resource.data.boltCost is int && request.resource.data.boltCost >= 0;
+      allow update, delete: if false; // immutable after creation
     }
-    
-    // Optional: Allow users to read their own redemptions only
-    // match /redemptions/{document} {
-    //   allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
-    // }
   }
 }

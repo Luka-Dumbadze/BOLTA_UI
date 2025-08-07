@@ -1,33 +1,35 @@
 {
   "expo": {
-    "name": "BOLTA",
-    "slug": "bolta-app",
+    "name": "Boltha",
+    "slug": "boltha-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/adaptive-icon.png",
+    "icon": "./assets/app-icon/icon-1024.png",
     "userInterfaceStyle": "light",
-    "scheme": "bolta",
+    "scheme": "boltha",
     "splash": {
-      "image": "./assets/adaptive-icon.png",
+      "image": "./assets/splash/splash-1284x2778.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#007AFF"
     },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.bolta.app"
+      "bundleIdentifier": "com.boltha.app",
+      "icon": "./assets/app-icon/icon-1024.png"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/app-icon/adaptive-icon.png",
+        "backgroundColor": "#007AFF"
       },
-      "package": "com.bolta.app"
+      "package": "com.boltha.app",
+      "icon": "./assets/app-icon/icon-1024.png"
     },
     "web": {
-      "favicon": "./assets/adaptive-icon.png"
+      "favicon": "./assets/app-icon/icon-256.png"
     }
   }
 }

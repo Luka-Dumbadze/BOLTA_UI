@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boltha App Icon Preview</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #F2F2F7;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #007AFF;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }
+        .icon-preview {
+            text-align: center;
+            padding: 20px;
+            background: #F8F8F8;
+            border-radius: 8px;
+        }
+        .icon-preview h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .icon-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 15px 0;
+        }
+        .icon-16 { width: 16px; height: 16px; }
+        .icon-32 { width: 32px; height: 32px; }
+        .icon-64 { width: 64px; height: 64px; }
+        .icon-128 { width: 128px; height: 128px; }
+        .icon-256 { width: 256px; height: 256px; }
+        
+        .color-palette {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        .color-swatch {
+            text-align: center;
+        }
+        .color-box {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            margin: 0 auto 10px;
+            border: 2px solid #ddd;
+        }
+        .primary { background: #007AFF; }
+        .gold { background: #FFD700; }
+        .success { background: #34C759; }
+        .background { background: #F2F2F7; }
+        
+        .specs {
+            background: #F8F8F8;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .specs h3 {
+            color: #007AFF;
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚶‍♂️ Boltha App Icon Preview</h1>
+        
+        <div class="color-palette">
+            <div class="color-swatch">
+                <div class="color-box primary"></div>
+                <small>Primary<br>#007AFF</small>
+            </div>
+            <div class="color-swatch">
+                <div class="color-box gold"></div>
+                <small>Gold<br>#FFD700</small>
+            </div>
+            <div class="color-swatch">
+                <div class="color-box success"></div>
+                <small>Success<br>#34C759</small>
+            </div>
+            <div class="color-swatch">
+                <div class="color-box background"></div>
+                <small>Background<br>#F2F2F7</small>
+            </div>
+        </div>
+
+        <div class="preview-grid">
+            <div class="icon-preview">
+                <h3>16x16 (Notification)</h3>
+                <div class="icon-container">
+                    <object data="source/icon-concept.svg" class="icon-16" type="image/svg+xml">
+                        <div style="width:16px;height:16px;background:#007AFF;border-radius:3px;"></div>
+                    </object>
+                </div>
+                <small>Must be clearly recognizable</small>
+            </div>
+            
+            <div class="icon-preview">
+                <h3>32x32 (Spotlight)</h3>
+                <div class="icon-container">
+                    <object data="source/icon-concept.svg" class="icon-32" type="image/svg+xml">
+                        <div style="width:32px;height:32px;background:#007AFF;border-radius:6px;"></div>
+                    </object>
+                </div>
+                <small>Search results</small>
+            </div>
+            
+            <div class="icon-preview">
+                <h3>64x64 (Home Screen)</h3>
+                <div class="icon-container">
+                    <object data="source/icon-concept.svg" class="icon-64" type="image/svg+xml">
+                        <div style="width:64px;height:64px;background:#007AFF;border-radius:12px;"></div>
+                    </object>
+                </div>
+                <small>Standard app icon</small>
+            </div>
+            
+            <div class="icon-preview">
+                <h3>128x128 (Retina)</h3>
+                <div class="icon-container">
+                    <object data="source/icon-concept.svg" class="icon-128" type="image/svg+xml">
+                        <div style="width:128px;height:128px;background:#007AFF;border-radius:24px;"></div>
+                    </object>
+                </div>
+                <small>High-DPI displays</small>
+            </div>
+            
+            <div class="icon-preview">
+                <h3>256x256 (App Store)</h3>
+                <div class="icon-container">
+                    <object data="source/icon-concept.svg" class="icon-256" type="image/svg+xml">
+                        <div style="width:256px;height:256px;background:#007AFF;border-radius:48px;"></div>
+                    </object>
+                </div>
+                <small>Store listings</small>
+            </div>
+        </div>
+
+        <div class="specs">
+            <h3>Design Specifications</h3>
+            <ul>
+                <li><strong>Concept:</strong> Footprint/step symbol + coin/reward element</li>
+                <li><strong>Style:</strong> Minimalist, modern, iOS-compliant</li>
+                <li><strong>Colors:</strong> Primary Blue (#007AFF) + Gold (#FFD700)</li>
+                <li><strong>Requirements:</strong> Must be recognizable at 16px</li>
+                <li><strong>Format:</strong> 1024x1024 PNG with transparent background</li>
+            </ul>
+        </div>
+
+        <div class="specs">
+            <h3>Concept Elements</h3>
+            <ul>
+                <li>🦶 <strong>Footprint:</strong> Represents step tracking and walking activity</li>
+                <li>🪙 <strong>Coin:</strong> Represents rewards and "Bolts" currency</li>
+                <li>⚡ <strong>Lightning:</strong> Symbol for "Bolts" and energy/motivation</li>
+                <li>🎯 <strong>Integration:</strong> Elements should work together harmoniously</li>
+            </ul>
+        </div>
+
+        <p style="text-align: center; color: #666; margin-top: 40px;">
+            <small>This is a concept preview. Final assets need to be created by a professional designer.<br>
+            See DESIGNER_BRIEF.md and BRAND_ASSETS_SPECS.md for complete requirements.</small>
+        </p>
+    </div>
+</body>
+</html>

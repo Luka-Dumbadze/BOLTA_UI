@@ -10,8 +10,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 import { useSession } from '../providers/SessionProvider';
 import { Colors } from '../constants/Colors';
+import { User } from '../types';
 
 interface LeaderboardUser {
   id: string;
@@ -31,60 +34,90 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
   const { user } = useSession();
   const [loading, setLoading] = useState(true);
   const [topUsers, setTopUsers] = useState<LeaderboardUser[]>([]);
+  const [userRank, setUserRank] = useState<number | null>(null);
 
   useEffect(() => {
-    // Simulate fetching leaderboard data
-    // In real app, this would fetch from Firestore
+    // Fetch leaderboard data from Firestore
     const fetchLeaderboard = async () => {
       setLoading(true);
       
-      // Mock data - replace with actual Firestore query
-      const mockUsers: LeaderboardUser[] = [
-        {
-          id: '1',
-          name: 'Sarah Chen',
-          boltBalance: 2450,
-          rank: 1,
-          avatar: 'https://via.placeholder.com/60x60?text=SC'
-        },
-        {
-          id: '2', 
-          name: 'Alex Rivera',
-          boltBalance: 2180,
-          rank: 2,
-          avatar: 'https://via.placeholder.com/60x60?text=AR'
-        },
-        {
-          id: '3',
-          name: 'Jordan Kim',
-          boltBalance: 1950,
-          rank: 3,
-          avatar: 'https://via.placeholder.com/60x60?text=JK'
-        }
-      ];
+      try {
+        // Create Firestore query to get top 3 users by boltBalance
+        const usersQuery = query(
+          collection(db, 'users'),
+          orderBy('boltBalance', 'desc'),
+          limit(3)
+        );
 
-      // Add current user if they're in top 3
-      if (user && user.boltBalance >= 1950) {
-        const currentUserRank = mockUsers.findIndex(u => u.boltBalance <= user.boltBalance) + 1;
-        if (currentUserRank <= 3) {
-          mockUsers.splice(currentUserRank - 1, 0, {
-            id: user.uid,
-            name: user.name,
-            boltBalance: user.boltBalance,
-            rank: currentUserRank,
-            isCurrentUser: true
-          });
-          // Update ranks
-          mockUsers.forEach((u, index) => {
-            u.rank = index + 1;
-          });
-        }
-      }
+        const querySnapshot = await getDocs(usersQuery);
+        const firestoreUsers: LeaderboardUser[] = [];
 
-      setTimeout(() => {
-        setTopUsers(mockUsers.slice(0, 3));
+        querySnapshot.forEach((doc, index) => {
+          const userData = doc.data() as User;
+          firestoreUsers.push({
+            id: doc.id,
+            name: userData.name,
+            boltBalance: userData.boltBalance,
+            rank: index + 1,
+            avatar: userData.profilePictureUrl,
+            isCurrentUser: user ? doc.id === user.uid : false
+          });
+        });
+
+        // If current user is not in top 3, fetch their rank
+        if (user && !firestoreUsers.some(u => u.isCurrentUser)) {
+          try {
+            // Query to get users with higher bolt balance than current user
+            const higherUsersQuery = query(
+              collection(db, 'users'),
+              orderBy('boltBalance', 'desc')
+            );
+            
+            const higherUsersSnapshot = await getDocs(higherUsersQuery);
+            let currentUserRank = 1;
+            
+            higherUsersSnapshot.forEach((doc) => {
+              const userData = doc.data() as User;
+              if (userData.boltBalance > user.boltBalance) {
+                currentUserRank++;
+              }
+            });
+            
+            setUserRank(currentUserRank);
+          } catch (error) {
+            console.error('Error fetching user rank:', error);
+            setUserRank(null);
+          }
+        }
+
+        setTopUsers(firestoreUsers);
+      } catch (error) {
+        console.error('Error fetching leaderboard:', error);
+        // Fallback to mock data in case of error
+        const fallbackUsers: LeaderboardUser[] = [
+          {
+            id: '1',
+            name: 'Loading...',
+            boltBalance: 0,
+            rank: 1,
+          },
+          {
+            id: '2', 
+            name: 'Loading...',
+            boltBalance: 0,
+            rank: 2,
+          },
+          {
+            id: '3',
+            name: 'Loading...',
+            boltBalance: 0,
+            rank: 3,
+          }
+        ];
+        setTopUsers(fallbackUsers);
+      } finally {
         setLoading(false);
-      }, 1000);
+      }
     };
 
     fetchLeaderboard();
@@ -232,7 +265,7 @@ export default function Leaderboard({ onViewAll, style }: LeaderboardProps) {
               <Text style={styles.currentUserName}>Your Rank</Text>
             </View>
             <View style={styles.currentUserStats}>
-              <Text style={styles.currentUserRank}>#?</Text>
+              <Text style={styles.currentUserRank}>#{userRank || '?'}</Text>
               <View style={styles.currentUserBolts}>
                 <Ionicons name="flash" size={12} color={Colors.bolt} />
                 <Text style={styles.currentUserBalance}>{user.boltBalance}</Text>

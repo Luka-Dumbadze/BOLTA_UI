@@ -6,7 +6,11 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "deploy:security": "node scripts/deploy-security.js",
+    "deploy:security:prod": "node scripts/deploy-security.js production",
+    "firebase:emulator": "firebase emulators:start --only firestore,auth",
+    "firebase:deploy": "firebase deploy --only firestore"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

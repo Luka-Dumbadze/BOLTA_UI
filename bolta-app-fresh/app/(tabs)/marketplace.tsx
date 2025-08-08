@@ -1,5 +1,5 @@
 // app/marketplace.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
@@ -16,8 +16,46 @@ import { useSession } from '../../providers/SessionProvider';
 import { Reward } from '../../types';
 import { Colors } from '../../constants/Colors';
 
+// Constants for optimization
+const REWARDS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const RETRY_ATTEMPTS = 3;
+const RETRY_DELAY = 1000;
+
+// Cache interface
+interface RewardsCache {
+  rewards: Reward[];
+  timestamp: number;
+}
+
+// Global cache for rewards
+let rewardsCache: RewardsCache | null = null;
+
+// Retry utility function
+const retryOperation = async <T>(
+  operation: () => Promise<T>,
+  maxAttempts: number = RETRY_ATTEMPTS,
+  delay: number = RETRY_DELAY
+): Promise<T> => {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`Marketplace operation failed (attempt ${attempt}/${maxAttempts}):`, error);
+      
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, delay * attempt));
+      }
+    }
+  }
+  
+  throw lastError!;
+};
+
 /**
- * Reusable Reward Card Component
+ * Optimized Reward Card Component with memoization
  * Displays individual reward information in a card format
  */
 interface RewardCardProps {
@@ -25,9 +63,16 @@ interface RewardCardProps {
   onPress: (reward: Reward) => void;
 }
 
-function RewardCard({ reward, onPress }: RewardCardProps) {
+const RewardCard = memo(function RewardCard({ reward, onPress }: RewardCardProps) {
   const { user } = useSession();
-  const canAfford = user && user.boltBalance >= reward.boltCost;
+  const canAfford = useMemo(() => 
+    user && user.boltBalance >= reward.boltCost, 
+    [user?.boltBalance, reward.boltCost]
+  );
+
+  const handlePress = useCallback(() => {
+    onPress(reward);
+  }, [reward, onPress]);
 
   return (
     <TouchableOpacity
@@ -35,7 +80,7 @@ function RewardCard({ reward, onPress }: RewardCardProps) {
         styles.rewardCard,
         !canAfford && styles.rewardCardDisabled
       ]}
-      onPress={() => onPress(reward)}
+      onPress={handlePress}
       disabled={!canAfford}
     >
       <View style={styles.cardHeader}>
@@ -68,28 +113,50 @@ function RewardCard({ reward, onPress }: RewardCardProps) {
       )}
     </TouchableOpacity>
   );
-}
+});
 
 /**
- * Marketplace Screen Component
- * Displays all available rewards from Firestore
+ * Optimized Marketplace Screen Component
+ * Displays all available rewards from Firestore with caching
  */
-export default function Marketplace() {
+const Marketplace = memo(function Marketplace() {
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const { user, updateBoltBalance, refreshUserData } = useSession();
+  const [error, setError] = useState<string | null>(null);
+  const { user, updateBoltBalance, refreshUserData, isOnline } = useSession();
+
+  // Check if cache is valid
+  const isCacheValid = useCallback((cache: RewardsCache | null): boolean => {
+    if (!cache) return false;
+    const now = Date.now();
+    return (now - cache.timestamp) < REWARDS_CACHE_DURATION;
+  }, []);
 
   /**
-   * Fetch rewards from Firestore
-   * Only fetches active rewards with stock available
+   * Optimized fetch rewards function with caching and retry logic
    */
-  const fetchRewards = async () => {
+  const fetchRewards = useCallback(async (forceRefresh: boolean = false) => {
+    // Check cache first (unless force refresh)
+    if (!forceRefresh && isCacheValid(rewardsCache)) {
+      console.log('📋 Using cached rewards data');
+      setRewards(rewardsCache!.rewards);
+      setError(null);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    setError(null);
+    if (!refreshing) setLoading(true);
+    
     try {
+      console.log('🔄 Fetching fresh rewards data...');
+      
       const rewardsRef = collection(db, 'rewards');
       
-      // Try to fetch all documents first (for testing)
-      const querySnapshot = await getDocs(rewardsRef);
+      // Use retry logic for Firestore operations
+      const querySnapshot = await retryOperation(() => getDocs(rewardsRef));
       const rewardsData: Reward[] = [];
       
       querySnapshot.forEach((doc) => {
@@ -100,40 +167,61 @@ export default function Marketplace() {
         } as Reward);
       });
       
-      setRewards(rewardsData);
+      // Sort rewards by active status and bolt cost
+      const sortedRewards = rewardsData.sort((a, b) => {
+        if (a.isActive !== b.isActive) {
+          return a.isActive ? -1 : 1; // Active rewards first
+        }
+        return a.boltCost - b.boltCost; // Then by cost (ascending)
+      });
       
-      // If no rewards found, show info message
-      if (rewardsData.length === 0) {
-        console.log('No rewards found in the collection. You may need to add some test data.');
-      }
-    } catch (error) {
-      console.error('Error fetching rewards:', error);
+      setRewards(sortedRewards);
       
-      // Handle permission errors gracefully
-      if (error.code === 'permission-denied') {
-        Alert.alert(
-          'Database Setup Required', 
-          'The rewards collection needs to be set up with proper security rules. For now, the marketplace will show as empty.'
-        );
+      // Update cache
+      rewardsCache = {
+        rewards: sortedRewards,
+        timestamp: Date.now()
+      };
+      
+      console.log(`✅ Loaded ${sortedRewards.length} rewards successfully`);
+      
+    } catch (error: any) {
+      console.error('❌ Error fetching rewards:', error);
+      setError(error.message || 'Failed to load rewards');
+      
+      // Use cached data as fallback if available
+      if (rewardsCache) {
+        console.log('📋 Using cached data as fallback');
+        setRewards(rewardsCache.rewards);
+        setError('Using cached data - connection issues');
       } else {
-        Alert.alert('Error', 'Failed to load rewards. Please try again.');
+        // Handle specific error types
+        if (error.code === 'permission-denied') {
+          setError('Permission denied - check Firestore rules');
+        } else if (!isOnline) {
+          setError('You are offline');
+        } else {
+          setError('Failed to load rewards. Please try again.');
+        }
+        setRewards([]);
       }
-      
-      // Set empty array so the app doesn't crash
-      setRewards([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [isCacheValid, refreshing, isOnline]);
 
   /**
-   * Handle reward selection
-   * Show reward details and redemption option
+   * Optimized reward selection handler
    */
-  const handleRewardPress = (reward: Reward) => {
+  const handleRewardPress = useCallback((reward: Reward) => {
     if (!user) {
-      Alert.alert('Error', 'Please log in to redeem rewards');
+      Alert.alert('Authentication Required', 'Please log in to redeem rewards');
+      return;
+    }
+
+    if (!isOnline) {
+      Alert.alert('Offline', 'You need to be online to redeem rewards');
       return;
     }
 
@@ -150,6 +238,11 @@ export default function Marketplace() {
       return;
     }
 
+    if (!reward.isActive) {
+      Alert.alert('Unavailable', 'This reward is currently unavailable.');
+      return;
+    }
+
     // Show reward details and confirmation
     Alert.alert(
       reward.rewardTitle,
@@ -163,23 +256,23 @@ export default function Marketplace() {
         }
       ]
     );
-  };
+  }, [user, isOnline]);
 
   /**
-   * Handle reward redemption
-   * Deduct bolts from user balance and create redemption record
+   * Optimized reward redemption handler with better error handling
    */
-  const handleRewardRedemption = async (reward: Reward) => {
+  const handleRewardRedemption = useCallback(async (reward: Reward) => {
     if (!user) {
-      Alert.alert('Error', 'Please log in to redeem rewards');
+      Alert.alert('Authentication Required', 'Please log in to redeem rewards');
       return;
     }
 
+    const newBalance = user.boltBalance - reward.boltCost;
+    
     try {
-      // Calculate new balance
-      const newBalance = user.boltBalance - reward.boltCost;
+      console.log(`💰 Redeeming reward: ${reward.rewardTitle} for ${reward.boltCost} bolts`);
       
-      // Create redemption record first
+      // Create redemption record with retry logic
       const redemptionData = {
         userId: user.uid,
         userName: user.name,
@@ -187,62 +280,101 @@ export default function Marketplace() {
         rewardId: reward.rewardId,
         rewardTitle: reward.rewardTitle,
         partnerName: reward.partnerName,
-        boltCost: reward.boltCost,
-        status: 'completed',
+        boltsCost: reward.boltCost, // Match the interface
+        status: 'pending',
+        redemptionCode: `BOLT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
         redeemedAt: serverTimestamp(),
-        expiryDate: new Date(Date.now() + (reward.expiryDays * 24 * 60 * 60 * 1000)).toISOString()
+        expiresAt: serverTimestamp() // Will be updated with actual expiry
       };
 
-      // Add redemption record to Firestore
-      await addDoc(collection(db, 'redemptions'), redemptionData);
+      await retryOperation(() => addDoc(collection(db, 'redemptions'), redemptionData));
+      console.log('✅ Redemption record created');
       
-      // Update user's bolt balance
+      // Update user's bolt balance (optimistic update)
       await updateBoltBalance(newBalance);
+      console.log('✅ Bolt balance updated');
       
-      // Update reward stock count (if needed)
+      // Update reward stock count
       if (reward.stockCount > 0) {
         const rewardDocRef = doc(db, 'rewards', reward.rewardId);
-        await updateDoc(rewardDocRef, {
-          stockCount: reward.stockCount - 1
-        });
+        await retryOperation(() => updateDoc(rewardDocRef, {
+          stockCount: reward.stockCount - 1,
+          updatedAt: serverTimestamp()
+        }));
+        console.log('✅ Reward stock updated');
+        
+        // Update local cache
+        if (rewardsCache) {
+          const updatedRewards = rewardsCache.rewards.map(r => 
+            r.rewardId === reward.rewardId 
+              ? { ...r, stockCount: r.stockCount - 1 }
+              : r
+          );
+          rewardsCache = {
+            rewards: updatedRewards,
+            timestamp: rewardsCache.timestamp
+          };
+          setRewards(updatedRewards);
+        }
       }
       
       // Show success message
       Alert.alert(
         'Redemption Successful! 🎉',
-        `You have successfully redeemed "${reward.rewardTitle}"!\n\nYour new balance: ⚡ ${newBalance} bolts\n\nRedemption details will be sent to your email.`,
+        `You have successfully redeemed "${reward.rewardTitle}"!\n\nYour new balance: ⚡ ${newBalance} bolts\n\nRedemption code: ${redemptionData.redemptionCode}\n\nDetails will be sent to your email.`,
         [{ text: 'OK', style: 'default' }]
       );
       
-      // Refresh rewards list to update stock count and ensure user balance is current
+      console.log('🎉 Redemption completed successfully');
+      
+    } catch (error: any) {
+      console.error('❌ Error redeeming reward:', error);
+      
+      // Provide specific error messages
+      let errorMessage = 'There was an error processing your redemption. Please try again.';
+      if (error.code === 'permission-denied') {
+        errorMessage = 'Permission denied. Please check your account status.';
+      } else if (!isOnline) {
+        errorMessage = 'You are offline. Please check your connection and try again.';
+      }
+      
+      Alert.alert('Redemption Failed', errorMessage);
+      
+      // Refresh data to ensure consistency
       await Promise.all([
-        fetchRewards(),
+        fetchRewards(true),
         refreshUserData()
       ]);
-      
-    } catch (error) {
-      console.error('Error redeeming reward:', error);
-      Alert.alert(
-        'Redemption Failed',
-        'There was an error processing your redemption. Please try again.'
-      );
     }
-  };
+  }, [user, updateBoltBalance, fetchRewards, refreshUserData, isOnline]);
 
   /**
-   * Handle pull-to-refresh
+   * Optimized pull-to-refresh handler
    */
-  const onRefresh = () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchRewards();
-  };
+    fetchRewards(true); // Force refresh
+  }, [fetchRewards]);
 
   /**
    * Load rewards when component mounts
    */
   useEffect(() => {
     fetchRewards();
-  }, []);
+  }, [fetchRewards]);
+
+  // Memoized render functions
+  const renderRewardCard = useCallback(({ item }: { item: Reward }) => (
+    <RewardCard reward={item} onPress={handleRewardPress} />
+  ), [handleRewardPress]);
+
+  const keyExtractor = useCallback((item: Reward) => item.rewardId, []);
+
+  // Memoized balance display
+  const balanceDisplay = useMemo(() => 
+    `⚡ ${user?.boltBalance?.toLocaleString() || 0} bolts`,
+    [user?.boltBalance]
+  );
 
   /**
    * Render loading state
@@ -278,37 +410,42 @@ export default function Marketplace() {
    */
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Optimized Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Marketplace</Text>
-        <Text style={styles.subtitle}>
-          Your Balance: ⚡ {user?.boltBalance || 0} bolts
-        </Text>
+        <Text style={styles.subtitle}>Your Balance: {balanceDisplay}</Text>
+        {error && (
+          <Text style={styles.errorText}>⚠️ {error}</Text>
+        )}
       </View>
 
-      {/* Rewards List */}
+      {/* Optimized Rewards List */}
       <FlatList
         data={rewards}
-        keyExtractor={(item) => item.rewardId}
-        renderItem={({ item }) => (
-          <RewardCard
-            reward={item}
-            onPress={handleRewardPress}
-          />
-        )}
+        keyExtractor={keyExtractor}
+        renderItem={renderRewardCard}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
             colors={[Colors.primary]}
+            tintColor={Colors.primary}
           />
         }
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        initialNumToRender={5}
+        windowSize={10}
+        getItemLayout={undefined} // Let FlatList handle dynamic sizing
       />
     </View>
   );
-}
+});
+
+export default Marketplace;
 
 /**
  * Stylesheet for the Marketplace component
@@ -334,6 +471,12 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: Colors.textSecondary,
+  },
+  errorText: {
+    fontSize: 14,
+    color: Colors.error,
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   listContainer: {
     padding: 20,
